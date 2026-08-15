@@ -1,11 +1,3 @@
-"""Print available audio devices.
-
-Run with:  uv run scripts/list_devices.py
-
-Use this to find the index/name of your microphone, and the PulseAudio/
-PipeWire ".monitor" devices needed later for MonitorSource (system audio).
-"""
-
 from __future__ import annotations
 
 import sounddevice as sd

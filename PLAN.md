@@ -10,11 +10,17 @@ dropped in later.
 > and will evolve as we lock down specifics.
 
 > [!IMPORTANT]
-> **Note to the agent:** Do **not** generate, write, or edit implementation code.
-> Your role is to **guide, discuss, and refine the design/plan only**. The human will
-> do all the implementation themselves. You may edit this planning document and use
-> illustrative snippets *within it* to communicate design ideas, but never produce
-> code intended to be used as the actual implementation.
+> **Note to the agent:** You **may** implement code, but **only one small feature or
+> chunk at a time** — never a whole file or class in one go. Work in the smallest
+> reasonable units and stop after each:
+> - the class definition (with its docstring/attributes) on its own,
+> - then the constructor (`__init__`) on its own,
+> - then **each individual method, one by one**.
+>
+> After writing each chunk, **explain what it does and why** before moving on, and
+> wait for the human to review/approve before continuing to the next chunk. Do not
+> batch multiple methods together. You may still edit this planning document and use
+> illustrative snippets within it to communicate design ideas.
 
 ---
 
