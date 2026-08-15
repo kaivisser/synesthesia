@@ -50,6 +50,9 @@ class Config:
         Renderer motion style (default = perlin).
     fps:
         Target render frames per second (decisions log: ~30 fps).
+    debug:
+        When True, overlay live pipeline info (chord, confidence, RMS, RGB,
+        fps, scheme/motion) on top of the colour field.
     """
 
     # source controls
@@ -74,6 +77,7 @@ class Config:
     # renderer controls
     motion: str = "perlin"
     fps: float = 30.0
+    debug: bool = False
 
 
 def parse_args(argv: list[str] | None = None) -> Config:
@@ -151,6 +155,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument(
         "--fps", type=float, default=d.fps, help="target render frames per second"
     )
+    p.add_argument(
+        "--debug",
+        action="store_true",
+        default=d.debug,
+        help="overlay live pipeline debug info (chord, confidence, RMS, fps)",
+    )
 
     ns = p.parse_args(argv)
 
@@ -175,4 +185,5 @@ def parse_args(argv: list[str] | None = None) -> Config:
         fade_tau=ns.fade_tau,
         motion=ns.motion,
         fps=ns.fps,
+        debug=ns.debug,
     )
