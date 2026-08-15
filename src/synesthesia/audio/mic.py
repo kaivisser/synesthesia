@@ -22,11 +22,19 @@ class MicSource(AudioSource):
         device: Optional[int | str] = None,
         buffer_seconds: float = 1.0,
         gain: float = 1.0,
+        max_channels: int = 2,
     ) -> None:
         self.device = device
 
         # Digital gain applied post-downmix.
         self.gain = float(gain)
+
+        # Cap on channels to open. PipeWire's aggregate "default"/"pipewire"
+        # device advertises 64 input channels; opening all 64 and averaging them
+        # yields garbage (mostly-empty/mis-mapped channels, plus system-audio
+        # bleed). Since we downmix to mono anyway, capturing 1-2 channels of the
+        # real mic is all we need. Regular mics report 1-2 and are unaffected.
+        self.max_channels = int(max_channels)
 
         capacity = int(buffer_seconds * self.sample_rate)
         self._ring = RingBuffer(capacity=capacity)
@@ -40,7 +48,7 @@ class MicSource(AudioSource):
             return
 
         info = sd.query_devices(self.device, "input")
-        channels = int(info["max_input_channels"]) or 1
+        channels = min(int(info["max_input_channels"]) or 1, self.max_channels)
 
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,  # driver resamples if device differs

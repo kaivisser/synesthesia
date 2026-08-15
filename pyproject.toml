@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-synesthesia = "synesthesia:main"
+synesthesia = "synesthesia.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
