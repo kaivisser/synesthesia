@@ -1,0 +1,29 @@
+[project]
+name = "synesthesia"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Kai Visser", email = "kai.visser@smarkets.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "blessed>=1.48.0",
+    "librosa>=1.0.0",
+    "numpy>=2.5.2",
+    "opensimplex>=0.4.5.1",
+    "sounddevice>=0.5.5",
+    "soundfile>=0.14.0",
+]
+
+[project.scripts]
+synesthesia = "synesthesia:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
