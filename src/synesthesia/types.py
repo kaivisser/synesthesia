@@ -3,20 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-# Pitch-class names, index 0-11 = C..B (shared spelling across the project).
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
 class Quality(str, Enum):
-    """
-    Chord quality (the "flavour" of a triad), independent of its root.
-
-    v1 vocabulary is major/minor only (PLAN.md §3.3); dim/aug/7ths are planned
-    later and would slot in as new members here. Inheriting from ``str`` makes
-    members compare/serialise as their value ("maj"/"min") -- handy for logging
-    and for interop with the matcher, which already speaks those strings.
-    """
-
     MAJ = "maj"
     MIN = "min"
 
@@ -24,28 +14,16 @@ class Quality(str, Enum):
 @dataclass(frozen=True)
 class ChordEstimate:
     """
-    One detector output: the chord heard in a frame, with dynamics (PLAN.md §2).
-
-    An immutable value object passed down the pipeline (detector -> colour
-    mapper). ``root``/``quality`` say *which* chord; ``confidence`` and ``rms``
-    carry the dynamics the colour mapper needs (confidence -> purity, rms ->
-    brightness, per §3.4).
-
-    Silence is represented by the ``NO_CHORD`` sentinel below rather than a magic
-    root value: check ``is_chord`` to decide chord-colour vs fade-to-black.
-
-    Attributes
-    ----------
     root:
-        Pitch class 0-11 (0=C .. 11=B). Meaningless when ``is_chord`` is False.
+        Pitch class 0-11 (0=C .. 11=B). Meaningless when is_chord is False.
     quality:
-        MAJ or MIN (v1). Meaningless when ``is_chord`` is False.
+        MAJ or MIN etc. Meaningless when is_chord is False.
     confidence:
-        Cosine-similarity match strength in [0, 1] (§3.3).
+        Cosine-similarity match strength in [0, 1].
     rms:
-        Root-mean-square loudness of the source frame (roughly [0, 1]).
+        Root-mean-square loudness of the source frame.
     is_chord:
-        False only for the silence sentinel; True for a real detected chord.
+        False only for the silence sentinel.
     """
 
     root: int
@@ -62,7 +40,37 @@ class ChordEstimate:
         return f"{_NOTE_NAMES[self.root]} {self.quality.value}"
 
 
-# Silence sentinel: root/quality are placeholders (not read when is_chord=False).
 NO_CHORD = ChordEstimate(
     root=0, quality=Quality.MAJ, confidence=0.0, rms=0.0, is_chord=False
 )
+
+
+@dataclass(frozen=True)
+class ColourState:
+    """
+    hue:
+        Dominant hue in [0, 1) (0=red, 1/3=green, 2/3=blue), from root + scheme.
+    saturation:
+        Colour purity in [0, 1]; driven by quality/confidence.
+    value:
+        Brightness in [0, 1]; driven mainly by loudness (RMS).
+    intensity:
+        Overall energy in [0, 1] the renderer can use to scale motion amplitude
+        (e.g. stronger/faster movement when the music is louder).
+    """
+
+    hue: float
+    saturation: float
+    value: float
+    intensity: float
+
+    def as_rgb(self) -> tuple[int, int, int]:
+        """Convert to an 8-bit RGB triple for renderers that need raw colour."""
+        import colorsys
+
+        r, g, b = colorsys.hsv_to_rgb(self.hue, self.saturation, self.value)
+        return round(r * 255), round(g * 255), round(b * 255)
+
+
+# Fully black state: what silence/fade-to-black settles on (§3.4).
+BLACK = ColourState(hue=0.0, saturation=0.0, value=0.0, intensity=0.0)

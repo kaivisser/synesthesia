@@ -281,7 +281,7 @@ synesthesia/
 │   │   ├── __init__.py
 │   │   ├── schemes.py        # Scriabin / chromatic / circle-of-fifths tables
 │   │   ├── mapper.py         # ChordEstimate → ColourState
-│   │   └── interp.py         # HSV/Oklab LERP + fade-to-black
+│   │   └── interpolator.py   # HSV/Oklab LERP + fade-to-black
 │   │
 │   ├── render/               # §3.5 renderer
 │   │   ├── __init__.py
