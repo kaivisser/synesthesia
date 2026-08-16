@@ -5,6 +5,7 @@ import time
 from synesthesia.audio.base import AudioSource
 from synesthesia.audio.framer import Framer
 from synesthesia.audio.mic import MicSource
+from synesthesia.audio.monitor import MonitorSource
 from synesthesia.colour.interpolator import ColourInterpolator
 from synesthesia.colour.mapper import ColourMapper
 from synesthesia.config import Config
@@ -17,7 +18,10 @@ def build_source(config: Config) -> AudioSource:
     if config.source == "mic":
         return MicSource(device=config.device, gain=config.gain)
 
-    if config.source in ("file", "monitor"):
+    if config.source == "monitor":
+        return MonitorSource(sink=config.monitor_sink, gain=config.gain)
+
+    if config.source == "file":
         raise NotImplementedError(f"source {config.source!r} not implemented yet")
 
     raise ValueError(f"unknown source {config.source!r}")

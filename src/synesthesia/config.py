@@ -25,7 +25,10 @@ class Config:
     file_path:
         Path to the audio file if source == file.
     device:
-        Optional sounddevice device index/name for mic/monitor.
+        Optional sounddevice device index/name for mic.
+    monitor_sink:
+        PipeWire sink node name whose monitor to capture (source == monitor).
+        None -> auto-detect the current default sink.
     gain:
         Digital gain applied post-downmix.
 
@@ -59,6 +62,7 @@ class Config:
     source: str = "mic"
     file_path: str | None = None
     device: int | str | None = None
+    monitor_sink: str | None = None
     gain: float = 1.0
 
     # framer controls
@@ -100,7 +104,16 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument(
         "--device",
         default=d.device,
-        help="sounddevice device index or name (mic/monitor)",
+        help="sounddevice device index or name (mic)",
+    )
+    p.add_argument(
+        "--monitor-sink",
+        dest="monitor_sink",
+        default=d.monitor_sink,
+        help=(
+            "PipeWire sink node name to capture (source=monitor); "
+            "default = current default sink (see `pw-link -o`)"
+        ),
     )
     p.add_argument(
         "--gain",
@@ -175,6 +188,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
         source=ns.source,
         file_path=ns.file_path,
         device=device,
+        monitor_sink=ns.monitor_sink,
         gain=ns.gain,
         sample_rate=d.sample_rate,
         window_size=ns.window_size,
