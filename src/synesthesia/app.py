@@ -37,6 +37,10 @@ def run(config: Config) -> None:
         sample_rate=config.sample_rate,
         silence_rms=config.silence_rms,
         smoothing=config.smoothing,
+        onset_rise=config.onset_rise,
+        onset_floor=config.onset_floor,
+        onset_cooldown_frames=config.onset_cooldown_frames,
+        onset_min_rms=config.onset_min_rms,
     )
     mapper = ColourMapper(scheme=config.scheme)
     interp = ColourInterpolator(tau=config.fade_tau)
@@ -48,7 +52,7 @@ def run(config: Config) -> None:
 
 
 def _run_render(config, framer, detector, mapper, interp) -> None:
-    renderer = TerminalRenderer(make_motion(config.motion))
+    renderer = TerminalRenderer(make_motion(config.motion, config))
 
     frame_dt = 1.0 / config.fps
     last = time.monotonic()
@@ -103,17 +107,33 @@ def _run_debug(config, framer, detector, mapper, interp) -> None:
 
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
+# Peak-normalised chroma level a note must exceed to be shown as "firing" in the
+# debug readout. Matches the spirit of the detector's onset gate.
+_FIRING_THRESHOLD = 0.5
+
 
 def _format_chroma(chroma) -> str:
+    """
+    Show only the notes currently "firing" (peak-normalised level above
+    ``_FIRING_THRESHOLD``), strongest first, instead of all 12 pitch classes.
+    """
     if chroma is None:
-        return "chroma=" + " ".join(f"{n:>3}=  -  " for n in _NOTE_NAMES)
+        return "notes[ - ]"
     peak = chroma.max()
     if peak <= 0.0:
-        norm = chroma
-    else:
-        norm = chroma / peak
-    cells = "".join(f"{name:>3} ={val:5.2f} " for name, val in zip(_NOTE_NAMES, norm))
-    return f"chroma[{cells} ]"
+        return "notes[ - ]"
+
+    norm = chroma / peak
+    firing = [
+        (_NOTE_NAMES[i], float(norm[i]))
+        for i in range(len(norm))
+        if norm[i] >= _FIRING_THRESHOLD
+    ]
+    firing.sort(key=lambda nv: nv[1], reverse=True)
+    if not firing:
+        return "notes[ - ]"
+    cells = " ".join(f"{name}={val:4.2f}" for name, val in firing)
+    return f"notes[ {cells} ]"
 
 
 def _print_debug_line(estimate, colour, fps: float) -> None:

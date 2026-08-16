@@ -30,6 +30,11 @@ class ChordEstimate:
     chroma:
         The 12-element pitch-class vector (C..B) that produced this estimate,
         after smoothing. ``None`` for the silence sentinel.
+    onsets:
+        Pitch classes (0-11) whose energy *newly* rose this frame -- i.e. note
+        attacks detected since the previous frame. Instantaneous events (not
+        smoothed), used to trigger per-note visual effects (e.g. rain drops).
+        Empty when nothing new struck.
     """
 
     root: int
@@ -38,6 +43,7 @@ class ChordEstimate:
     rms: float
     is_chord: bool = True
     chroma: Optional[np.ndarray] = None
+    onsets: tuple[int, ...] = ()
 
     @property
     def name(self) -> str:
@@ -64,12 +70,20 @@ class ColourState:
     intensity:
         Overall energy in [0, 1] the renderer can use to scale motion amplitude
         (e.g. stronger/faster movement when the music is louder).
+    onsets:
+        Note attacks for *this frame* as ``(pitch_class, hue)`` pairs -- the
+        pitch classes that newly struck (from ``ChordEstimate.onsets``) paired
+        with each note's hue under the active colour scheme. Motion styles use
+        these to spawn per-note effects (e.g. a rain drop tinted by the note).
+        Instantaneous: empty on frames with no new attack, and never smoothed by
+        the interpolator (unlike hue/sat/value/intensity).
     """
 
     hue: float
     saturation: float
     value: float
     intensity: float
+    onsets: tuple[tuple[int, float], ...] = ()
 
     def as_rgb(self) -> tuple[int, int, int]:
         """Convert to an 8-bit RGB triple for renderers that need raw colour."""

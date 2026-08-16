@@ -80,9 +80,15 @@ class ColourMapper:
         value = _clamp01(base_val * (0.25 + 0.75 * loudness))
         intensity = loudness
 
+        # Pair each note attack with its own hue under the active scheme, so
+        # per-note effects (rain drops) are tinted by the note that struck, not
+        # the chord's root. Pass-through event data -- not smoothed downstream.
+        onsets = tuple((pc, self.hues[pc]) for pc in estimate.onsets)
+
         return ColourState(
             hue=hue,
             saturation=saturation,
             value=value,
             intensity=intensity,
+            onsets=onsets,
         )

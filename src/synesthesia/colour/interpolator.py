@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 from synesthesia.types import BLACK, ColourState
 
@@ -34,8 +35,12 @@ class ColourInterpolator:
         self.current = BLACK
 
     def update(self, target: ColourState, dt: float) -> ColourState:
+        # Onsets are instantaneous note-attack events, NOT a smoothed quantity:
+        # they belong to *this* target frame only and must pass straight through.
+        # We keep ``self.current`` onset-free (so a drop never re-fires on later
+        # frames) and attach the target's onsets only to the value we return.
         if dt <= 0.0:
-            return self.current
+            return replace(self.current, onsets=target.onsets)
 
         alpha = 1.0 - math.exp(-dt / self.tau)
 
@@ -46,4 +51,4 @@ class ColourInterpolator:
             value=_lerp(cur.value, target.value, alpha),
             intensity=_lerp(cur.intensity, target.intensity, alpha),
         )
-        return self.current
+        return replace(self.current, onsets=target.onsets)

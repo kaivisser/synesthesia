@@ -7,13 +7,10 @@ SOURCES = ("mic", "file", "monitor")
 SCHEMES = ("scriabin", "chromatic", "fifths")
 MOTIONS = (
     "solid",
-    "breathe",
     "plasma",
     "perlin",
-    "radial",
-    "gradient-drift",
     "aurora",
-    "ripple",
+    "rain",
 )
 
 
@@ -44,6 +41,19 @@ class Config:
     smoothing:
         Detector chroma EMA factor in [0, 1); higher = smoother/slower.
 
+    onset_rise:
+        Min per-frame energy jump (peak-normalised) for a note attack to fire an
+        onset (drives rain drops). Higher = only sharp attacks trigger.
+    onset_floor:
+        Absolute energy gate a note must exceed to fire an onset. Higher =
+        only prominent notes drop rain (suppresses leakage/quiet notes).
+    onset_cooldown_frames:
+        Per-note lockout (frames) after an onset fires, so a held note strikes
+        once. Higher = ignores fast re-strikes (sparser rain).
+    onset_min_rms:
+        Absolute raw-loudness gate for onsets: notes quieter than this never
+        drop rain (even if loudest this frame). Distinct from silence_rms.
+
     scheme:
         Colour scheme name: "scriabin" | "chromatic" | "fifths".
     fade_tau:
@@ -56,6 +66,17 @@ class Config:
     debug:
         When True, overlay live pipeline info (chord, confidence, RMS, RGB,
         fps, scheme/motion) on top of the colour field.
+
+    rain_speed:
+        (motion=rain) How fast a drop's ring expands (screen-units/sec).
+    rain_max_radius:
+        (motion=rain) Radius at which a drop fully fades and is culled.
+    rain_depth:
+        (motion=rain) Peak brightness a fresh drop adds at its crest [0, 1].
+    rain_hue_pull:
+        (motion=rain) How strongly a drop tints toward its note's hue [0, 1].
+    rain_max_drops:
+        (motion=rain) Cap on simultaneously live drops (oldest culled).
     """
 
     # source controls
@@ -63,7 +84,7 @@ class Config:
     file_path: str | None = None
     device: int | str | None = None
     monitor_sink: str | None = None
-    gain: float = 1.0
+    gain: float = 10.0
 
     # framer controls
     sample_rate: int = 44100
@@ -73,15 +94,26 @@ class Config:
     # detector controls
     silence_rms: float = 0.05
     smoothing: float = 0.6
+    onset_rise: float = 0.15
+    onset_floor: float = 0.2
+    onset_cooldown_frames: int = 3
+    onset_min_rms: float = 0.05
 
     # colour controls
     scheme: str = "scriabin"
-    fade_tau: float = 0.6
+    fade_tau: float = 1
 
     # renderer controls
     motion: str = "perlin"
     fps: float = 60.0
     debug: bool = False
+
+    # rain motion controls (only used when motion == "rain")
+    rain_speed: float = 0.4
+    rain_max_radius: float = 0.5
+    rain_depth: float = 0.6
+    rain_hue_pull: float = 0.6
+    rain_max_drops: int = 24
 
 
 def parse_args(argv: list[str] | None = None) -> Config:
@@ -146,6 +178,30 @@ def parse_args(argv: list[str] | None = None) -> Config:
         default=d.smoothing,
         help="detector chroma EMA factor in [0, 1)",
     )
+    p.add_argument(
+        "--onset-rise",
+        type=float,
+        default=d.onset_rise,
+        help="min per-frame energy jump for a note attack (rain drops)",
+    )
+    p.add_argument(
+        "--onset-floor",
+        type=float,
+        default=d.onset_floor,
+        help="absolute energy gate a note must exceed to trigger a rain drop",
+    )
+    p.add_argument(
+        "--onset-cooldown-frames",
+        type=int,
+        default=d.onset_cooldown_frames,
+        help="per-note lockout in frames after an onset (higher = sparser rain)",
+    )
+    p.add_argument(
+        "--onset-min-rms",
+        type=float,
+        default=d.onset_min_rms,
+        help="absolute loudness gate for onsets (quiet notes never drop rain)",
+    )
 
     # colour args
     p.add_argument(
@@ -175,6 +231,38 @@ def parse_args(argv: list[str] | None = None) -> Config:
         help="overlay live pipeline debug info (chord, confidence, RMS, fps)",
     )
 
+    # rain motion args (only used when --motion rain)
+    p.add_argument(
+        "--rain-speed",
+        type=float,
+        default=d.rain_speed,
+        help="(rain) drop ring expansion speed (screen-units/sec)",
+    )
+    p.add_argument(
+        "--rain-max-radius",
+        type=float,
+        default=d.rain_max_radius,
+        help="(rain) radius at which a drop fully fades and is culled",
+    )
+    p.add_argument(
+        "--rain-depth",
+        type=float,
+        default=d.rain_depth,
+        help="(rain) peak brightness a fresh drop adds at its crest [0, 1]",
+    )
+    p.add_argument(
+        "--rain-hue-pull",
+        type=float,
+        default=d.rain_hue_pull,
+        help="(rain) how strongly a drop tints toward its note's hue [0, 1]",
+    )
+    p.add_argument(
+        "--rain-max-drops",
+        type=int,
+        default=d.rain_max_drops,
+        help="(rain) cap on simultaneously live drops (oldest culled)",
+    )
+
     ns = p.parse_args(argv)
 
     device = ns.device
@@ -195,9 +283,18 @@ def parse_args(argv: list[str] | None = None) -> Config:
         hop=ns.hop,
         silence_rms=ns.silence_rms,
         smoothing=ns.smoothing,
+        onset_rise=ns.onset_rise,
+        onset_floor=ns.onset_floor,
+        onset_cooldown_frames=ns.onset_cooldown_frames,
+        onset_min_rms=ns.onset_min_rms,
         scheme=ns.scheme,
         fade_tau=ns.fade_tau,
         motion=ns.motion,
         fps=ns.fps,
         debug=ns.debug,
+        rain_speed=ns.rain_speed,
+        rain_max_radius=ns.rain_max_radius,
+        rain_depth=ns.rain_depth,
+        rain_hue_pull=ns.rain_hue_pull,
+        rain_max_drops=ns.rain_max_drops,
     )
