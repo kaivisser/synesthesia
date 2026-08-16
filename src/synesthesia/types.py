@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
+
+import numpy as np
 
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -24,6 +27,9 @@ class ChordEstimate:
         Root-mean-square loudness of the source frame.
     is_chord:
         False only for the silence sentinel.
+    chroma:
+        The 12-element pitch-class vector (C..B) that produced this estimate,
+        after smoothing. ``None`` for the silence sentinel.
     """
 
     root: int
@@ -31,6 +37,7 @@ class ChordEstimate:
     confidence: float
     rms: float
     is_chord: bool = True
+    chroma: Optional[np.ndarray] = None
 
     @property
     def name(self) -> str:

@@ -67,7 +67,7 @@ class Config:
     hop: int = 2048
 
     # detector controls
-    silence_rms: float = 0.01
+    silence_rms: float = 0.05
     smoothing: float = 0.6
 
     # colour controls
@@ -76,7 +76,7 @@ class Config:
 
     # renderer controls
     motion: str = "perlin"
-    fps: float = 30.0
+    fps: float = 60.0
     debug: bool = False
 
 

@@ -44,7 +44,6 @@ def run(config: Config) -> None:
 
 
 def _run_render(config, framer, detector, mapper, interp) -> None:
-    """Normal path: full-screen colour field via the terminal renderer."""
     renderer = TerminalRenderer(make_motion(config.motion))
 
     frame_dt = 1.0 / config.fps
@@ -70,11 +69,6 @@ def _run_render(config, framer, detector, mapper, interp) -> None:
 
 
 def _run_debug(config, framer, detector, mapper, interp) -> None:
-    """
-    Debug path: no full-screen colour field. Prints a single, updating status
-    line with the live pipeline state plus a tiny colour swatch, so detection
-    and audio can be diagnosed without any terminal rendering.
-    """
     frame_dt = 1.0 / config.fps
     last = time.monotonic()
     fps_ema = config.fps
@@ -100,11 +94,25 @@ def _run_debug(config, framer, detector, mapper, interp) -> None:
         except KeyboardInterrupt:
             pass
 
-    print()  # leave the cursor on a fresh line after the status line
+    print()
+
+
+_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def _format_chroma(chroma) -> str:
+    if chroma is None:
+        return "chroma=" + " ".join(f"{n:>3}=  -  " for n in _NOTE_NAMES)
+    peak = chroma.max()
+    if peak <= 0.0:
+        norm = chroma
+    else:
+        norm = chroma / peak
+    cells = "".join(f"{name:>3} ={val:5.2f} " for name, val in zip(_NOTE_NAMES, norm))
+    return f"chroma[{cells} ]"
 
 
 def _print_debug_line(estimate, colour, fps: float) -> None:
-    """Render one in-place status line: swatch + chord/conf/rms/rgb/fps."""
     r, g, b = colour.as_rgb()
     swatch = f"\x1b[48;2;{r};{g};{b}m   \x1b[0m"
     line = (
@@ -112,6 +120,7 @@ def _print_debug_line(estimate, colour, fps: float) -> None:
         f"conf={estimate.confidence:4.2f} "
         f"rms={estimate.rms:6.3f} "
         f"rgb=({r:3d},{g:3d},{b:3d}) "
-        f"fps={fps:4.1f}"
+        f"fps={fps:4.1f} "
+        f"{_format_chroma(estimate.chroma)}"
     )
     print(f"\r\x1b[2K{line}", end="", flush=True)

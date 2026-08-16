@@ -1,164 +1,154 @@
 from __future__ import annotations
 
-import colorsys
+from typing import Optional
 
+import numpy as np
 from blessed import Terminal
 
 from synesthesia.render.base import Renderer
 from synesthesia.render.motion import Motion
 from synesthesia.types import ColourState
 
-# Half-block glyph: its foreground paints the TOP pixel, the cell background the
-# BOTTOM pixel, so one character row shows two vertically-stacked pixels (§3.5).
 _HALF_BLOCK = "\u2580"  # ▀
 
 
+def _hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
+    """
+    Vectorized HSV -> 8-bit RGB for a whole grid.
+
+    hsv : np.ndarray
+        a height x width grid of hsv values;
+            [
+                [[0.0, 1.0, 1.0], [0.33, 1.0, 1.0]],   # row 0: two pixels
+                [[0.66, 1.0, 1.0], [0.0, 0.0, 0.5]],   # row 1: two pixels
+            ]
+    """
+    h = hsv[..., 0]
+    s = hsv[..., 1]
+    v = hsv[..., 2]
+
+    i = np.floor(h * 6.0)
+    f = h * 6.0 - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * f)
+    t = v * (1.0 - s * (1.0 - f))
+    i = i.astype(np.int64) % 6
+
+    r = np.choose(i, [v, q, p, p, t, v])
+    g = np.choose(i, [t, v, v, q, p, p])
+    b = np.choose(i, [p, p, t, v, v, q])
+
+    rgb = np.stack([r, g, b], axis=-1)
+    return np.clip(rgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+
+# Precomputed "000".."255" decimal strings so we don't have to do str(int) every for every pixel
+_DEC = np.array([f"{i:d}" for i in range(256)], dtype="U3")
+
+
+def _ansi_frame(top: np.ndarray, bottom: np.ndarray, moves: list[str]) -> str:
+    """
+    Build the full frame string from top/bottom RGB grids, fully vectorized.
+
+    Each cell becomes ``ESC[38;2;fr;fg;fb;48;2;br;bg;bbm▀`` (fg = top pixel,
+    bg = bottom pixel). We assemble the per-cell strings with array-wide string
+    concatenation (no Python per-pixel loop), reset SGR at each row end, and
+    join rows with explicit cursor moves.
+
+    ``top`` / ``bottom`` are ``(H, W, 3)`` uint8 arrays; ``moves[r]`` positions
+    the cursor at the start of row ``r + 1``.
+    """
+    tr, tg, tb = (_DEC[top[..., k]] for k in range(3))
+    br, bg, bb = (_DEC[bottom[..., k]] for k in range(3))
+
+    # Per-cell escape: "\x1b[38;2;R;G;B;48;2;R;G;Bm▀"  (object-dtype string add).
+    cells = (
+        "\x1b[38;2;"
+        + tr
+        + ";"
+        + tg
+        + ";"
+        + tb
+        + ";48;2;"
+        + br
+        + ";"
+        + bg
+        + ";"
+        + bb
+        + "m"
+        + _HALF_BLOCK
+    )
+
+    height = cells.shape[0]
+    rows = ["".join(cells[r].tolist()) for r in range(height)]
+
+    out: list[str] = []
+    for r, row in enumerate(rows):
+        out.append(row)
+        out.append("\x1b[0m")
+        if r + 1 < height:
+            out.append(moves[r])
+    return "".join(out)
+
+
 class TerminalRenderer(Renderer):
-    """
-    Truecolor terminal backend (PLAN.md §3.5) -- the v1 renderer.
-
-    Draws a full-screen colour field using **half-block** glyphs (``▀``): each
-    character cell stacks two vertical "pixels" by colouring the glyph's
-    foreground (top pixel) and the cell background (bottom pixel), doubling
-    vertical resolution for free. Every cell's colour comes from the active
-    ``Motion`` style sampling around the frame's base ``ColourState``.
-
-    Rendering discipline (per §3.5):
-
-    * **One buffered write per frame** -- the whole screen is composed into a
-      single string and emitted in one ``print`` to avoid tearing/flicker.
-    * **Alternate screen buffer + hidden cursor** on ``start``; both restored on
-      ``stop`` so the user's shell is left exactly as it was, even on Ctrl-C.
-
-    Attributes
-    ----------
-    term:
-        The ``blessed.Terminal`` used for capability strings (truecolor codes,
-        cursor moves, screen setup/teardown).
-    motion:
-        The active motion style; sampled once per half-block pixel per frame.
-    _clock:
-        Accumulated elapsed seconds handed to ``motion.advance`` each frame.
-    """
-
-    def __init__(self, motion: Motion, term: Terminal | None = None) -> None:
+    def __init__(self, motion: Motion, term: Optional[Terminal] = None) -> None:
         self.term = term if term is not None else Terminal()
         self.motion = motion
-        self._clock = 0.0
+        self._grid_shape: Optional[tuple[int, int]] = None
+        self._xs: np.ndarray = np.array([])
+        self._ys: np.ndarray = np.array([])
+        self._moves: Optional[list[str]] = None
 
     def start(self) -> None:
-        """
-        Enter the alternate screen buffer and hide the cursor (§3.5).
-
-        We emit the capability strings directly rather than using blessed's
-        ``fullscreen()``/``hidden_cursor()`` context managers, because the
-        render loop's setup/teardown is driven by ``Renderer.__enter__`` /
-        ``__exit__`` (and ``stop`` below), not a ``with`` block here. Using the
-        alternate screen means the user's scrollback is untouched: on ``stop``
-        we pop back to exactly what was on screen before.
-        """
-        # Raw ANSI (not blessed capabilities, which can be empty when terminfo
-        # isn't resolved): enter alt-screen (1049h), hide cursor (25l),
-        # home (H), clear screen (2J).
-        print("\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J", end="", flush=True)
+        t = self.term
+        print(t.enter_fullscreen + t.hide_cursor + t.home + t.clear, end="", flush=True)
 
     def stop(self) -> None:
-        """
-        Restore the terminal: show the cursor and leave the alternate screen
-        (§3.5). The exact inverse of ``start`` and safe to call on any exit path
-        (normal or Ctrl-C), leaving the user's shell exactly as it was.
-        """
-        # Inverse of start: reset SGR, show cursor (25h), leave alt-screen (1049l).
-        print("\x1b[0m\x1b[?25h\x1b[?1049l", end="", flush=True)
+        t = self.term
+        print(t.normal + t.normal_cursor + t.exit_fullscreen, end="", flush=True)
 
-    def render(
-        self,
-        colour: ColourState,
-        dt: float,
-        overlay: list[str] | None = None,
-    ) -> None:
-        """
-        Draw one frame for ``colour`` (§3.5).
-
-        Advances the motion clock by ``dt``, then composes the entire screen --
-        every half-block cell sampled from the motion style around ``colour`` --
-        into a single string and emits it in **one buffered write** to avoid
-        flicker/tearing. If ``overlay`` is given, those text lines are drawn on
-        top of the field (top-left) for debug/HUD use.
-        """
-        self._clock += dt
+    def render(self, colour: ColourState, dt: float) -> None:
         self.motion.advance(dt)
-        frame = self._compose(colour)
-        if overlay:
-            frame += self._overlay(overlay)
-        print(frame, end="", flush=True)
+        print(self._compose(colour), end="", flush=True)
+
+    def _coords(self, height: int, width: int) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return cached normalised (xs, ys) coordinate grids of shape
+        (2*height, width) -- one row per half-block pixel. Recomputed only when
+        the terminal is resized, since the coordinate grids are otherwise fixed.
+        """
+        pixel_rows = height * 2
+        if self._grid_shape != (pixel_rows, width):
+            xs_axis = np.linspace(0.0, 1.0, width, endpoint=False, dtype=np.float32)
+            ys_axis = np.linspace(
+                0.0, 1.0, pixel_rows, endpoint=False, dtype=np.float32
+            )
+            self._ys, self._xs = np.meshgrid(ys_axis, xs_axis, indexing="ij")
+            self._grid_shape = (pixel_rows, width)
+        return self._xs, self._ys
 
     def _compose(self, base: ColourState) -> str:
-        """
-        Build the full-screen frame string for ``base``.
-
-        The terminal is ``width`` columns by ``height`` rows; half-blocks give
-        ``2 * height`` pixel rows. For each character cell we sample the motion
-        style at the top pixel (foreground) and the bottom pixel (background),
-        normalising coordinates to [0, 1) so a style is resolution-independent.
-        """
         t = self.term
         width = t.width or 80
         height = t.height or 24
-        pixel_rows = height * 2
 
-        # Precompute inverse spans once (avoid per-cell division); guard width/
-        # height of 1 so we never divide by zero.
-        inv_w = 1.0 / width if width > 1 else 0.0
-        inv_h = 1.0 / pixel_rows if pixel_rows > 1 else 0.0
+        xs, ys = self._coords(height, width)
+        hsv = self.motion.sample(base, xs, ys)  # (2*height, width, 3)
+        rgb = _hsv_to_rgb(hsv)  # (2*height, width, 3) uint8
 
-        # Home via a raw CUP escape (row 1, col 1) rather than a blessed
-        # capability: terminfo lookups can come back empty in some environments,
-        # leaving rows unpositioned and making the field fight the overlay
-        # (screen-wide flicker). Raw ANSI is deterministic and universal.
-        parts: list[str] = ["\x1b[H"]
-        for row in range(height):
-            top_py = row * 2
-            bottom_py = top_py + 1
-            for col in range(width):
-                x = col * inv_w
-                top = self.motion.sample(base, x, top_py * inv_h)
-                bottom = self.motion.sample(base, x, bottom_py * inv_h)
-                tr, tg, tb = _to_rgb(top)
-                br, bg, bb = _to_rgb(bottom)
-                # fg = top pixel, bg = bottom pixel; ▀ fills the top half.
-                parts.append(f"\x1b[38;2;{tr};{tg};{tb};48;2;{br};{bg};{bb}m{_HALF_BLOCK}")
-            parts.append("\x1b[0m")
-            # Explicit next-row move (CUP) instead of relying on auto-wrap, which
-            # terminals defer after the last column ("xn" glitch) -> row drift.
-            # rows/cols are 1-based in ANSI; skip the final trailing move.
-            if row + 1 < height:
-                parts.append(f"\x1b[{row + 2};1H")
-        return "".join(parts)
+        # Even pixel rows -> top (foreground); odd rows -> bottom (background).
+        top = rgb[0::2]  # (height, width, 3)
+        bottom = rgb[1::2]  # (height, width, 3)
 
-    def _overlay(self, lines: list[str]) -> str:
+        return t.home + _ansi_frame(top, bottom, self._row_move(height))
+
+    def _row_move(self, height: int) -> list[str]:
         """
-        Compose ``lines`` as a HUD in the top-left, over the colour field.
-
-        Each line is drawn as bright white text on a solid black background so it
-        stays legible regardless of the field colour behind it. Positioned with
-        absolute cursor moves and appended *after* the field so it paints last.
+        Cached per-row cursor-move strings (one per row boundary). Recomputed
+        only on resize; used to reposition each row explicitly (avoids the
+        deferred auto-wrap "xn" glitch that drifts rows -> flicker).
         """
-        t = self.term
-        width = t.width or 80
-        box = min(width, 40)
-        parts: list[str] = []
-        for i, line in enumerate(lines):
-            # Pad to a fixed box width so old, longer text is fully overwritten.
-            text = f" {line} ".ljust(box)
-            # Raw CUP escape (1-based) to the top-left; deterministic regardless
-            # of terminfo, so it lands exactly on the field cells it overwrites.
-            parts.append(f"\x1b[{i + 1};1H")
-            parts.append(f"\x1b[1;38;2;255;255;255;48;2;0;0;0m{text}\x1b[0m")
-        return "".join(parts)
-
-
-def _to_rgb(c: ColourState) -> tuple[int, int, int]:
-    """HSV ``ColourState`` -> 8-bit RGB triple (mirrors ColourState.as_rgb)."""
-    r, g, b = colorsys.hsv_to_rgb(c.hue, c.saturation, c.value)
-    return round(r * 255), round(g * 255), round(b * 255)
+        if self._moves is None or len(self._moves) != height:
+            self._moves = [self.term.move_xy(0, r + 1) for r in range(height)]
+        return self._moves

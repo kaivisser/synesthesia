@@ -64,7 +64,7 @@ class MicSource(AudioSource):
         return self._ring.read(n)
 
     def stop(self) -> None:
-        # Alwasy silence the producer before closing the buffer.
+        # Always silence the producer before closing the buffer.
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()

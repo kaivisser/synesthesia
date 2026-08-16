@@ -71,4 +71,5 @@ class ChordDetector:
             quality=quality,
             confidence=confidence,
             rms=rms,
+            chroma=self._ema.copy(),
         )
