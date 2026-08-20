@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import threading
 import time
+from dataclasses import replace
 
+from synesthesia.app_state import LatestTarget, OnsetQueue
 from synesthesia.audio.base import AudioSource
 from synesthesia.audio.framer import Framer
 from synesthesia.audio.mic import MicSource
@@ -27,6 +30,29 @@ def build_source(config: Config) -> AudioSource:
     raise ValueError(f"unknown source {config.source!r}")
 
 
+def _analysis_worker(
+    framer: Framer,
+    detector: ChordDetector,
+    mapper: ColourMapper,
+    latest: LatestTarget,
+    onsets: OnsetQueue,
+    finished: threading.Event,
+) -> None:
+    """
+    Runs AudioSource, Framer, Mapper and places output in to shared thread-safe LatestTarget / OnsetQueue  buffers
+    """
+    try:
+        for frame in framer.frames():
+            if finished.is_set():
+                break
+            estimate = detector.update(frame)
+            target = mapper.map(estimate)
+            onsets.push(target.onsets)
+            latest.publish(replace(target, onsets=()), estimate)
+    finally:
+        finished.set()
+
+
 def run(config: Config) -> None:
     framer = Framer(
         build_source(config),
@@ -45,28 +71,47 @@ def run(config: Config) -> None:
     mapper = ColourMapper(scheme=config.scheme)
     interp = ColourInterpolator(tau=config.fade_tau)
 
-    if config.debug:
-        _run_debug(config, framer, detector, mapper, interp)
-    else:
-        _run_render(config, framer, detector, mapper, interp)
+    latest = LatestTarget()
+    onsets = OnsetQueue()
+    finished = threading.Event()
+
+    analysis = threading.Thread(
+        target=_analysis_worker,
+        args=(framer, detector, mapper, latest, onsets, finished),
+        name="analysis",
+        daemon=True,
+    )
+
+    consumer = _run_debug if config.debug else _run_render
+
+    framer.source.start()
+    analysis.start()
+    try:
+        consumer(config, interp, latest, onsets, finished)
+    finally:
+        finished.set()
+        framer.source.stop()
+        analysis.join(timeout=2.0)
 
 
-def _run_render(config, framer, detector, mapper, interp) -> None:
+def _run_render(config, interp, latest, onsets, finished) -> None:
+    """
+    Render to terminal. Run on dedicated thread.
+    """
     renderer = TerminalRenderer(make_motion(config.motion, config))
 
     frame_dt = 1.0 / config.fps
     last = time.monotonic()
 
-    with framer.source, renderer:
+    with renderer:
         try:
-            for frame in framer.frames():
-                estimate = detector.update(frame)
-
+            while not finished.is_set():
                 now = time.monotonic()
                 dt = now - last
                 last = now
-                colour = interp.update(mapper.map(estimate), dt)
 
+                colour = interp.update(latest.get(), dt)
+                colour = replace(colour, onsets=onsets.drain())
                 renderer.render(colour, dt)
 
                 sleep = frame_dt - (time.monotonic() - now)
@@ -76,31 +121,35 @@ def _run_render(config, framer, detector, mapper, interp) -> None:
             pass
 
 
-def _run_debug(config, framer, detector, mapper, interp) -> None:
+def _run_debug(config, interp, latest, onsets, finished) -> None:
+    """
+    Render debug info to terminal.
+    """
+
     frame_dt = 1.0 / config.fps
     last = time.monotonic()
     fps_ema = config.fps
 
-    with framer.source:
-        try:
-            for frame in framer.frames():
-                estimate = detector.update(frame)
+    try:
+        while not finished.is_set():
+            now = time.monotonic()
+            dt = now - last
+            last = now
 
-                now = time.monotonic()
-                dt = now - last
-                last = now
-                colour = interp.update(mapper.map(estimate), dt)
+            target, estimate = latest.get_with_estimate()
+            colour = interp.update(target, dt)
+            colour = replace(colour, onsets=onsets.drain())
 
-                if dt > 0:
-                    fps_ema = 0.9 * fps_ema + 0.1 * (1.0 / dt)
+            if dt > 0:
+                fps_ema = 0.9 * fps_ema + 0.1 * (1.0 / dt)
 
-                _print_debug_line(estimate, colour, fps_ema)
+            _print_debug_line(estimate, colour, fps_ema)
 
-                sleep = frame_dt - (time.monotonic() - now)
-                if sleep > 0:
-                    time.sleep(sleep)
-        except KeyboardInterrupt:
-            pass
+            sleep = frame_dt - (time.monotonic() - now)
+            if sleep > 0:
+                time.sleep(sleep)
+    except KeyboardInterrupt:
+        pass
 
     print()
 
@@ -118,17 +167,12 @@ def _format_chroma(chroma) -> str:
     ``_FIRING_THRESHOLD``), strongest first, instead of all 12 pitch classes.
     """
     if chroma is None:
-        return "notes[ - ]"
+        cells = " ".join(f"{name}=0.00" for name in _NOTE_NAMES)
+        return f"notes[ {cells} ]"
     peak = chroma.max()
-    if peak <= 0.0:
-        return "notes[ - ]"
 
     norm = chroma / peak
-    firing = [
-        (_NOTE_NAMES[i], float(norm[i]))
-        for i in range(len(norm))
-        if norm[i] >= _FIRING_THRESHOLD
-    ]
+    firing = [(_NOTE_NAMES[i], float(norm[i])) for i in range(len(norm))]
     firing.sort(key=lambda nv: nv[1], reverse=True)
     if not firing:
         return "notes[ - ]"
@@ -141,8 +185,8 @@ def _print_debug_line(estimate, colour, fps: float) -> None:
     swatch = f"\x1b[48;2;{r};{g};{b}m   \x1b[0m"
     line = (
         f"{swatch} chord={estimate.name:<6} "
-        f"conf={estimate.confidence:4.2f} "
-        f"rms={estimate.rms:6.3f} "
+        f"confidence={estimate.confidence:4.2f} "
+        f"loudness (rms) ={estimate.rms:6.3f} "
         f"rgb=({r:3d},{g:3d},{b:3d}) "
         f"fps={fps:4.1f} "
         f"{_format_chroma(estimate.chroma)}"
