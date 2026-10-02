@@ -7,29 +7,7 @@ from synesthesia.types import BLACK, NO_CHORD, ChordEstimate, ColourState
 
 class LatestTarget:
     """
-    Single-producer/single-consumer "latest value wins" handoff for the
-    concurrency split (PLAN §2).
-
-    The analysis thread computes a *target* ``ColourState`` (the raw
-    ``ColourMapper`` output for the current chord -- NOT yet interpolated) and
-    ``publish()``es it. The render thread ``get()``s the freshest target every
-    frame and does its own smoothing/motion at render fps. Only the newest
-    target matters: if analysis publishes several times between reads, older
-    targets are harmlessly overwritten (mirrors the drop-oldest audio policy,
-    §3.1).
-
-    Alongside the target colour it carries the ``ChordEstimate`` that produced
-    it, purely so the debug consumer can show chord/confidence/RMS/notes without
-    reaching across to the analysis thread's locals. The render (non-debug)
-    consumer just ignores it.
-
-    Note this deliberately carries only the *smoothed* colour fields
-    (hue/sat/value/intensity). Instantaneous ``onsets`` must NOT ride here --
-    latest-wins would drop attacks the render thread hasn't seen yet; they get a
-    separate queue in a later chunk.
-
-    Starts at ``BLACK`` / ``NO_CHORD`` so consumers have a valid value before
-    the first chord is detected.
+    Single-producer/single-consumer latest value wins handoff
     """
 
     def __init__(self) -> None:
@@ -44,35 +22,17 @@ class LatestTarget:
             self._estimate = estimate
 
     def get(self) -> ColourState:
-        """Return the freshest published target (render thread)."""
+        """Return the last published target"""
         with self._lock:
             return self._target
 
     def get_with_estimate(self) -> tuple[ColourState, ChordEstimate]:
-        """Return the freshest (target, estimate) pair (debug consumer)."""
+        """Return the last (target, estimate) pair for debug."""
         with self._lock:
             return self._target, self._estimate
 
 
 class OnsetQueue:
-    """
-    Thread-safe drain-once queue for note-attack onsets (PLAN §2 concurrency
-    split; the event counterpart to ``LatestTarget``).
-
-    Onsets are *instantaneous events*, not a retained state, so they must NOT
-    ride the latest-wins colour slot: a faster render loop re-reads that slot
-    several times per analysis frame and would spawn a rain drop each time (one
-    key press -> multiple drops). Instead the analysis thread ``push()``es each
-    frame's onsets and the render thread ``drain()``s them exactly once per
-    frame -- so every attack fires exactly one drop regardless of the
-    analysis/render fps ratio (render faster -> most frames drain empty; render
-    slower -> a frame drains several accumulated onsets, none lost).
-
-    Each onset is a ``(pitch_class, hue)`` pair (from ``ColourMapper``). The
-    queue is unbounded; Rain's ``max_drops`` bounds the *visual* cost, so extreme
-    bursts self-limit on screen rather than here.
-    """
-
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pending: list[tuple[int, float]] = []

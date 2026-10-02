@@ -14,14 +14,6 @@ from synesthesia.audio.ringbuffer import RingBuffer
 
 
 def _run(cmd: list[str], check: bool = True) -> Optional[str]:
-    """
-    Run a short command, returning its stdout, or None on failure.
-
-    ``check=True`` raises RuntimeError if the command is missing or exits
-    non-zero (used where we truly need the result, e.g. listing ports).
-    ``check=False`` swallows a non-zero exit and returns None (used for
-    best-effort links, where one channel may legitimately fail).
-    """
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True)
     except OSError as exc:
@@ -40,13 +32,6 @@ def _run(cmd: list[str], check: bool = True) -> Optional[str]:
 def _default_sink() -> str:
     """
     Return the current default PipeWire audio sink node name.
-
-    Reads ``pw-metadata`` (key ``default.audio.sink``), whose line looks like::
-
-        update: id:0 key:'default.audio.sink' value:'{"name":"alsa_output..."}' ...
-
-    We parse the JSON ``value`` to pull ``name``. Raises RuntimeError with a
-    hint to pass ``sink`` explicitly if pw-metadata is missing or unparseable.
     """
     try:
         out = subprocess.run(
@@ -82,27 +67,7 @@ def _default_sink() -> str:
 
 class MonitorSource(AudioSource):
     """
-    Live system-audio capture via a PipeWire ``pw-record`` subprocess (PLAN.md §3.1).
-
-    Why not a MicSource subclass? On this class of system the PortAudio build
-    has no PipeWire/PulseAudio hostapi, so sink ".monitor" devices are invisible
-    to it; worse, every automatic capture path (the ALSA "pipewire" bridge,
-    ``PULSE_SOURCE``, even ``pw-record``'s own ``--target``) gets auto-connected
-    by PipeWire to the *default source* (the microphone). Empirically the only
-    way to capture what is actually *playing* is to open a capture node with
-    autoconnect disabled (``pw-record --target 0``) and then explicitly
-    ``pw-link`` the chosen sink's ``:monitor_*`` ports onto it.
-
-    So this source spawns ``pw-record`` streaming raw ``f32`` stereo to stdout,
-    wires the sink monitor to it with ``pw-link``, then downmixes to mono and
-    feeds a thread-safe RingBuffer -- mirroring MicSource's producer/consumer
-    split, but with a subprocess + reader thread as the producer instead of a
-    PortAudio callback. The blocking ``read(n)`` contract is unchanged.
-
-    ``sink`` is the PipeWire sink *node name* whose monitor to capture (e.g.
-    ``alsa_output.pci-0000_00_1f.3.analog-stereo``); ``None`` means "resolve the
-    current default sink at start()". Discover names with ``pw-link -o`` or
-    ``uv run scripts/list_devices.py``.
+    Live system-audio capture via a PipeWire
     """
 
     # pw-record captures stereo; we downmix to mono ourselves.
@@ -134,9 +99,6 @@ class MonitorSource(AudioSource):
 
         sink = self.sink or _default_sink()
 
-        # Spawn pw-record with autoconnect OFF (--target 0): PipeWire would
-        # otherwise wire us to the default *source* (the mic). We stream raw
-        # interleaved f32 stereo to stdout and link the monitor ourselves.
         self._proc = subprocess.Popen(
             [
                 "pw-record",
@@ -163,12 +125,7 @@ class MonitorSource(AudioSource):
 
     def _link_monitor(self, sink: str) -> None:
         """
-        Wire ``sink``'s monitor ports onto our pw-record capture node.
-
-        pw-record registers its input ports (``pw-record:input_FL/FR``)
-        asynchronously after spawn, so we poll ``pw-link -i`` for them for up to
-        ~2 s before linking ``<sink>:monitor_FL/FR`` onto them. Linking a missing
-        FR (mono sinks) is tolerated; failing to link *any* channel raises.
+        Wire sink's monitor ports onto our pw-record capture node.
         """
         deadline = time.monotonic() + 2.0
         inputs: list[str] = []
@@ -202,10 +159,6 @@ class MonitorSource(AudioSource):
     def _read_loop(self) -> None:
         """
         Drain pw-record's stdout into the ring buffer until stop/EOF.
-
-        pw-record writes raw interleaved float32 stereo. We read a whole number
-        of sample-frames per iteration, deinterleave to (frames, 2), average to
-        mono, apply gain, and push. Runs on a daemon thread (the producer).
         """
         assert self._proc is not None and self._proc.stdout is not None
         stdout = self._proc.stdout

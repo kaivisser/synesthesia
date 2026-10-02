@@ -93,5 +93,4 @@ class ColourState:
         return round(r * 255), round(g * 255), round(b * 255)
 
 
-# Fully black state: what silence/fade-to-black settles on (§3.4).
-BLACK = ColourState(hue=0.0, saturation=0.0, value=0.0, intensity=0.0)
+BLACK = ColourState(hue=0.01, saturation=0.01, value=0.01, intensity=0.01)

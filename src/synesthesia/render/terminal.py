@@ -27,16 +27,17 @@ def _hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
     s = hsv[..., 1]
     v = hsv[..., 2]
 
-    i = np.floor(h * 6.0)
-    f = h * 6.0 - i
-    p = v * (1.0 - s)
-    q = v * (1.0 - s * f)
-    t = v * (1.0 - s * (1.0 - f))
-    i = i.astype(np.int64) % 6
+    sector = np.floor(h * 6.0)
+    fraction = h * 6.0 - sector
 
-    r = np.choose(i, [v, q, p, p, t, v])
-    g = np.choose(i, [t, v, v, q, p, p])
-    b = np.choose(i, [p, p, t, v, v, q])
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * fraction)
+    t = v * (1.0 - s * (1.0 - fraction))
+    sector = sector.astype(np.int64) % 6
+
+    r = np.choose(sector, [v, q, p, p, t, v])
+    g = np.choose(sector, [t, v, v, q, p, p])
+    b = np.choose(sector, [p, p, t, v, v, q])
 
     rgb = np.stack([r, g, b], axis=-1)
     return np.clip(rgb * 255.0 + 0.5, 0, 255).astype(np.uint8)
@@ -61,7 +62,7 @@ def _ansi_frame(top: np.ndarray, bottom: np.ndarray, moves: list[str]) -> str:
     tr, tg, tb = (_DEC[top[..., k]] for k in range(3))
     br, bg, bb = (_DEC[bottom[..., k]] for k in range(3))
 
-    # Per-cell escape: "\x1b[38;2;R;G;B;48;2;R;G;Bm▀"  (object-dtype string add).
+    # Per-cell escape: "\x1b[38;2;R;G;B;48;2;R;G;Bm▀"
     cells = (
         "\x1b[38;2;"
         + tr
@@ -135,9 +136,9 @@ class TerminalRenderer(Renderer):
 
         xs, ys = self._coords(height, width)
         hsv = self.motion.sample(base, xs, ys)  # (2*height, width, 3)
-        rgb = _hsv_to_rgb(hsv)  # (2*height, width, 3) uint8
+        rgb = _hsv_to_rgb(hsv)  # (2*height, width, 3)
 
-        # Even pixel rows -> top (foreground); odd rows -> bottom (background).
+        # Even pixel rows -> top, odd rows -> bottom
         top = rgb[0::2]  # (height, width, 3)
         bottom = rgb[1::2]  # (height, width, 3)
 

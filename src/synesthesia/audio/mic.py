@@ -30,10 +30,6 @@ class MicSource(AudioSource):
         self.gain = float(gain)
 
         # Cap on channels to open. PipeWire's aggregate "default"/"pipewire"
-        # device advertises 64 input channels; opening all 64 and averaging them
-        # yields garbage (mostly-empty/mis-mapped channels, plus system-audio
-        # bleed). Since we downmix to mono anyway, capturing 1-2 channels of the
-        # real mic is all we need. Regular mics report 1-2 and are unaffected.
         self.max_channels = int(max_channels)
 
         capacity = int(buffer_seconds * self.sample_rate)

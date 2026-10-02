@@ -84,36 +84,36 @@ class Config:
     file_path: str | None = None
     device: int | str | None = None
     monitor_sink: str | None = None
-    gain: float = 10.0
+    gain: float = 45.0
 
     # framer controls
-    sample_rate: int = 44100
-    window_size: int = 4096
-    hop: int = 2048
+    sample_rate: int = 11000  # 44100
+    window_size: int = 4096 * 2
+    hop: int = 2048 * 2
 
     # detector controls
-    silence_rms: float = 0.05
-    smoothing: float = 0.6
-    onset_rise: float = 0.15
-    onset_floor: float = 0.2
-    onset_cooldown_frames: int = 3
-    onset_min_rms: float = 0.05
+    silence_rms: float = 0.1
+    smoothing: float = 0.7
 
     # colour controls
     scheme: str = "scriabin"
-    fade_tau: float = 1
+    fade_tau: float = 0.9
 
     # renderer controls
     motion: str = "perlin"
-    fps: float = 60.0
+    fps: float = 120.0
     debug: bool = False
 
-    # rain motion controls (only used when motion == "rain")
-    rain_speed: float = 0.4
+    # rain motion controls
+    onset_rise: float = 0.3
+    onset_floor: float = 0.3
+    onset_cooldown_frames: int = 5
+    onset_min_rms: float = 0.8
+    rain_speed: float = 0.3
     rain_max_radius: float = 0.5
     rain_depth: float = 0.6
     rain_hue_pull: float = 0.6
-    rain_max_drops: int = 24
+    rain_max_drops: int = 12
 
 
 def parse_args(argv: list[str] | None = None) -> Config:
@@ -123,7 +123,6 @@ def parse_args(argv: list[str] | None = None) -> Config:
         description="A Python music visualizer.",
     )
 
-    # source args
     p.add_argument(
         "--source", choices=SOURCES, default=d.source, help="audio input to use"
     )

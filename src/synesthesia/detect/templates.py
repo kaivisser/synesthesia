@@ -19,20 +19,6 @@ def _triad_vector(root: int, intervals: tuple[int, ...]) -> np.ndarray:
 
 
 def build_templates() -> tuple[np.ndarray, list[tuple[int, Quality]]]:
-    """
-    Build the v1 chord vocabulary: 12 major + 12 minor triads (PLAN.md §3.3).
-
-    Returns
-    -------
-    templates:
-        Float32 array of shape (24, 12). Each row is a binary pitch-class
-        template (1.0 on the three chord tones, 0.0 elsewhere). Rows are ordered
-        as all 12 major triads (roots C..B) followed by all 12 minor triads.
-    labels:
-        Parallel list of (root, quality) for each row, where root is 0-11 and
-        quality is a Quality enum member. Lets the matcher report which chord won
-        and hands the colour mapper the root/quality it needs downstream.
-    """
     rows: list[np.ndarray] = []
     labels: list[tuple[int, Quality]] = []
 
@@ -81,7 +67,7 @@ def match(
         return root, quality, 0.0
 
     # cos = (T @ c) / (|T_row| * |c|), computed for all rows at once.
-    template_norms = np.linalg.norm(templates, axis=1)
+    template_norms = np.linalg.norm(templates, axis=1)  # TODO! remove
     sims = (templates @ chroma) / (template_norms * chroma_norm)
 
     best = int(np.argmax(sims))

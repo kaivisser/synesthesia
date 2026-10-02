@@ -35,10 +35,6 @@ class ColourInterpolator:
         self.current = BLACK
 
     def update(self, target: ColourState, dt: float) -> ColourState:
-        # Onsets are instantaneous note-attack events, NOT a smoothed quantity:
-        # they belong to *this* target frame only and must pass straight through.
-        # We keep ``self.current`` onset-free (so a drop never re-fires on later
-        # frames) and attach the target's onsets only to the value we return.
         if dt <= 0.0:
             return replace(self.current, onsets=target.onsets)
 

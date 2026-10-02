@@ -129,6 +129,7 @@ def _run_debug(config, interp, latest, onsets, finished) -> None:
     frame_dt = 1.0 / config.fps
     last = time.monotonic()
     fps_ema = config.fps
+    first_debug = True
 
     try:
         while not finished.is_set():
@@ -143,44 +144,64 @@ def _run_debug(config, interp, latest, onsets, finished) -> None:
             if dt > 0:
                 fps_ema = 0.9 * fps_ema + 0.1 * (1.0 / dt)
 
-            _print_debug_line(estimate, colour, fps_ema)
+            _print_debug_line(estimate, colour, fps_ema, first_debug)
+            first_debug = False
 
             sleep = frame_dt - (time.monotonic() - now)
             if sleep > 0:
                 time.sleep(sleep)
     except KeyboardInterrupt:
         pass
-
-    print()
+    print("\x1b[?7h")
 
 
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-# Peak-normalised chroma level a note must exceed to be shown as "firing" in the
-# debug readout. Matches the spirit of the detector's onset gate.
-_FIRING_THRESHOLD = 0.5
-
 
 def _format_chroma(chroma) -> str:
     """
-    Show only the notes currently "firing" (peak-normalised level above
-    ``_FIRING_THRESHOLD``), strongest first, instead of all 12 pitch classes.
+    Show all 12 pitch classes in fixed C..B order, peak-normalised, each
+    defaulting to 0.00 when there is no energy (silence / no chroma).
     """
     if chroma is None:
         cells = " ".join(f"{name}=0.00" for name in _NOTE_NAMES)
         return f"notes[ {cells} ]"
-    peak = chroma.max()
 
-    norm = chroma / peak
-    firing = [(_NOTE_NAMES[i], float(norm[i])) for i in range(len(norm))]
-    firing.sort(key=lambda nv: nv[1], reverse=True)
-    if not firing:
-        return "notes[ - ]"
-    cells = " ".join(f"{name}={val:4.2f}" for name, val in firing)
+    peak = float(chroma.max())
+    norm = chroma / peak if peak > 0.0 else chroma
+    cells = " ".join(
+        f"{name}={float(norm[i]):4.2f}" for i, name in enumerate(_NOTE_NAMES)
+    )
     return f"notes[ {cells} ]"
 
 
-def _print_debug_line(estimate, colour, fps: float) -> None:
+_DEBUG_LINES = 6
+
+_first_debug_print = True
+
+
+def _print_debug_line(estimate, colour, fps: float, first_debug: bool) -> None:
+    if first_debug:
+        time.sleep(2)
+    r, g, b = colour.as_rgb()
+    swatch = f"\x1b[48;2;{r};{g};{b}m   \x1b[0m"
+
+    # Move cursor back up to overwrite previous block (skip on first call)
+    prefix = "" if first_debug else f"\x1b[{_DEBUG_LINES}A"
+
+    block = (
+        f"{prefix}"
+        f"\x1b[2K{swatch} chord={estimate.name}\n"
+        f"\x1b[2K  confidence     = {estimate.confidence:4.2f}\n"
+        f"\x1b[2K  loudness (rms) ={estimate.rms:6.3f}\n"
+        f"\x1b[2K  rgb            = ({r:3d},{g:3d},{b:3d})\n"
+        f"\x1b[2K  fps            = {fps:4.1f}\n"
+        f"\x1b[2K  {_format_chroma(estimate.chroma)}"
+    )
+    print(block, flush=True)
+
+
+def _print_debug_line2(estimate, colour, fps: float) -> None:
     r, g, b = colour.as_rgb()
     swatch = f"\x1b[48;2;{r};{g};{b}m   \x1b[0m"
     line = (
@@ -191,4 +212,4 @@ def _print_debug_line(estimate, colour, fps: float) -> None:
         f"fps={fps:4.1f} "
         f"{_format_chroma(estimate.chroma)}"
     )
-    print(f"\r\x1b[2K{line}", end="", flush=True)
+    print(f"\r\x1b[?7l\x1b[0K{line}", end="", flush=True)
